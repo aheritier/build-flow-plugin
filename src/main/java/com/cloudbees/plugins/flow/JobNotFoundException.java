@@ -17,25 +17,17 @@
 
 package com.cloudbees.plugins.flow;
 
-import hudson.model.Hudson;
+public class JobNotFoundException extends RuntimeException {
 
-import java.io.IOException;
-
-import org.junit.Test;
-import org.jvnet.hudson.test.HudsonTestCase;
-
-/**
- * @author <a href="mailto:nicolas.deloof@cloudbees.com">Nicolas De loof</a>
- */
-public class BuildFlowTestCase extends HudsonTestCase {
-
-    public BuildFlow createBuildFlow(String name) throws IOException {
-        return (BuildFlow) hudson.createProject(BuildFlow.DESCRIPTOR, name);
-    }
-    
-    public void testBasic() throws Exception {
-        BuildFlow flow = createBuildFlow("flow1");
-        assertNotNull(flow);
+    public JobNotFoundException(String mess) {
+        super(mess);
     }
 
+    public JobNotFoundException(Exception e) {
+        super(e);
+    }
+
+    public JobNotFoundException(String mess, Exception e) {
+        super(mess, e);
+    }
 }

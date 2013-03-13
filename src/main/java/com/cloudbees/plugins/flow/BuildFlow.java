@@ -17,51 +17,36 @@
 
 package com.cloudbees.plugins.flow;
 
-import hudson.model.DependencyGraph;
-import hudson.model.Descriptor;
+import hudson.Extension;
+import hudson.model.*;
+import hudson.model.Descriptor.FormException;
+import hudson.model.Queue.FlyweightTask;
+import hudson.tasks.BuildStep;
+import hudson.tasks.BuildStepDescriptor;
+import hudson.tasks.Fingerprinter;
 import hudson.tasks.Publisher;
+import hudson.Util;
+import hudson.util.AlternativeUiTextProvider;
 import hudson.util.DescribableList;
 
-import hudson.model.AbstractProject;
-
-import com.cloudbees.plugins.flow.dsl.Flow;
-import com.cloudbees.plugins.flow.dsl.FlowDSL;
-
-import hudson.Extension;
-import hudson.Util;
-import hudson.model.AbstractBuild;
-import hudson.model.Descriptor.FormException;
-import hudson.model.Item;
-import hudson.model.ItemGroup;
-import hudson.model.Job;
-import hudson.model.Run;
-import hudson.model.RunMap;
-import hudson.model.Queue.FlyweightTask;
-import hudson.model.RunMap.Constructor;
-import hudson.model.SCMedItem;
-import hudson.model.TopLevelItem;
-import hudson.model.TopLevelItemDescriptor;
-import hudson.util.AlternativeUiTextProvider;
-
-import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.SortedMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.HashSet;
 import javax.servlet.ServletException;
+
+import net.sf.json.JSONObject;
 
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
-
-import jenkins.model.Jenkins;
 
 /**
  * Defines the orchestration logic for a build flow as a succession o jobs to be executed and chained together
  *
  * @author <a href="mailto:nicolas.deloof@cloudbees.com">Nicolas De loof</a>
  */
-public class BuildFlow extends AbstractProject<BuildFlow, FlowRun> implements TopLevelItem, FlyweightTask, SCMedItem {
+public class BuildFlow extends Project<BuildFlow, FlowRun> implements TopLevelItem, FlyweightTask, SCMedItem {
 
     private final FlowIcon icon = new FlowIcon();
 
@@ -74,22 +59,16 @@ public class BuildFlow extends AbstractProject<BuildFlow, FlowRun> implements To
     public String getDsl() {
         return dsl;
     }
-    
-    public Flow getFlow() {
-        return FlowDSL.readFlow(getDsl());
+
+    public void setDsl(String dsl) {
+        this.dsl = dsl;
     }
 
     @Override
     protected void submit(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException, FormException {
         super.submit(req, rsp);
-        this.dsl = req.getSubmittedForm().getString("dsl");
-        try {
-        	//TODO Need better validation (like check if jobs exist)
-        	getFlow();
-        } catch (groovy.lang.GroovyRuntimeException e) {
-        	e.printStackTrace();
-        	throw new FormException(Messages.BuildFlow_InvalidDSL(), e, "dsl");
-        }
+        JSONObject json = req.getSubmittedForm();
+        this.dsl = json.getString("dsl");
     }
 
     @Extension
@@ -99,17 +78,13 @@ public class BuildFlow extends AbstractProject<BuildFlow, FlowRun> implements To
         return DESCRIPTOR;
     }
 
-    public void onCompleted(Run run) {
-        // TODO trigger next step of the flow
-    }
-
     @Override
     public String getPronoun() {
         return AlternativeUiTextProvider.get(PRONOUN, this, Messages.BuildFlow_Messages());
     }
 
 
-    public static class BuildFlowDescriptor extends TopLevelItemDescriptor {
+    public static class BuildFlowDescriptor extends AbstractProjectDescriptor {
         @Override
         public String getDisplayName() {
             return Messages.BuildFlow_Messages();
@@ -121,31 +96,9 @@ public class BuildFlow extends AbstractProject<BuildFlow, FlowRun> implements To
         }
     }
 
-
-    @Override
-    public DescribableList<Publisher, Descriptor<Publisher>> getPublishersList() {
-        return new DescribableList<Publisher,Descriptor<Publisher>>(this);
-    }
-
     @Override
     protected Class<FlowRun> getBuildClass() {
         return FlowRun.class;
     }
 
-    @Override
-    public boolean isFingerprintConfigured() {
-        // TODO Auto-generated method stub
-        return false;
-    }
-
-    @Override
-    protected void buildDependencyGraph(DependencyGraph graph) {
-        // TODO Auto-generated method stub
-        
-    }
-
-	public AbstractProject<?, ?> asProject() {
-		return (AbstractProject) this;
-	} 
-    
 }

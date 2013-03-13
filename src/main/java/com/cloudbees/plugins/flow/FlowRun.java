@@ -17,169 +17,226 @@
 
 package com.cloudbees.plugins.flow;
 
-import groovy.lang.Closure;
-import hudson.model.BooleanParameterValue;
-import hudson.model.Cause.UpstreamCause;
-
+import static hudson.model.Result.FAILURE;
+import static hudson.model.Result.SUCCESS;
 import hudson.model.Action;
-
-import com.cloudbees.plugins.flow.dsl.Flow;
-import com.cloudbees.plugins.flow.dsl.FlowDSL;
-import com.cloudbees.plugins.flow.dsl.Step;
-import com.cloudbees.plugins.flow.dsl.Job;
+import hudson.model.Build;
 import hudson.model.BuildListener;
-import hudson.model.Item;
 import hudson.model.Result;
-import hudson.model.AbstractBuild;
-import hudson.model.AbstractProject;
-import hudson.model.Cause;
-import hudson.model.Executor;
-import hudson.model.ParametersAction;
-import hudson.model.StringParameterValue;
+import hudson.model.Run;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Future;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
-import jenkins.model.Jenkins;
 
-import static hudson.model.Result.FAILURE;
+import org.jgrapht.DirectedGraph;
+import org.jgrapht.ext.DOTExporter;
+import org.jgrapht.graph.SimpleDirectedGraph;
+import org.kohsuke.stapler.StaplerRequest;
+import org.kohsuke.stapler.StaplerResponse;
 
 /**
  * Maintain the state of execution of a build flow as a chain of triggered jobs
  *
  * @author <a href="mailto:nicolas.deloof@cloudbees.com">Nicolas De loof</a>
  */
-public class FlowRun extends AbstractBuild<BuildFlow, FlowRun>{
+public class FlowRun extends Build<BuildFlow, FlowRun> {
+
+    private static final Logger LOGGER = Logger.getLogger(FlowRun.class.getName());
     
-	private String dsl;
-    private transient Flow flow;
+    private String dsl;
+
+    private JobInvocation.Start startJob = new JobInvocation.Start(this);
+
+    private DirectedGraph<JobInvocation, JobEdge> jobsGraph = new SimpleDirectedGraph<JobInvocation, JobEdge>(JobEdge.class);
+
+    private transient ThreadLocal<FlowState> state = new ThreadLocal<FlowState>();
+    
+    private transient AtomicInteger buildIndex = new AtomicInteger(1);
+
+    public FlowRun(BuildFlow job, File buildDir) throws IOException {
+        super(job, buildDir);
+        setup(job);
+    }
 
     public FlowRun(BuildFlow job) throws IOException {
         super(job);
-        this.dsl = job.getDsl();
-        this.flow = job.getFlow();
+        setup(job);
     }
 
-    public FlowRun(BuildFlow project, File buildDir) throws IOException {
-        super(project, buildDir);
-        this.flow = project.getFlow();
+    private void setup(BuildFlow job) {
+        this.dsl = job.getDsl();
+        startJob.buildStarted(this);
+        jobsGraph.addVertex(startJob);
+        state.set(new FlowState(SUCCESS, startJob));
     }
-    
-    public Flow getFlow() {
-    	if (flow == null) {
-    		this.flow = FlowDSL.readFlow(dsl);
-    	}
-        return flow;
+
+    /* package */ Run  run(JobInvocation job, List<Action> actions) throws ExecutionException, InterruptedException {
+        addBuild(job);
+        job.run(new FlowCause(this, job), actions);
+        job.waitForCompletion();
+        getState().setResult(job.getResult());
+        return job.getBuild();
+    }
+
+    /* package */ FlowState getState() {
+        return state.get();
+    }
+
+    /* package */ void setState(FlowState s) {
+        state.set(s);
+    }
+
+    public DirectedGraph<JobInvocation, JobEdge> getJobsGraph() {
+        return jobsGraph;
+    }
+
+    /**
+     * Assigns a unique row and column to each build in the graph
+     */
+    private void setupDisplayGrid() {
+        List<List<JobInvocation>> allPaths = findAllPaths(startJob);
+        // make the longer paths bubble up to the top
+        Collections.sort(allPaths, new Comparator<List<JobInvocation>>() {
+            public int compare(List<JobInvocation> job1, List<JobInvocation> job2) {
+                return job2.size() - job1.size();
+            }
+        });
+        // set the build row and column of each build
+        // loop backwards through the rows so that the lowest path a job is on
+        // will be assigned
+        for (int row = allPaths.size() - 1; row >= 0; row--) {
+            List<JobInvocation> path = allPaths.get(row);
+            for (int column = 0; column < path.size(); column++) {
+                JobInvocation job = path.get(column);
+                job.setDisplayColumn(Math.max(job.getDisplayColumn(), column));
+                job.setDisplayRow(row);
+            }
+        }
+    }
+
+    /**
+     * Finds all paths that start at the given vertex
+     * @param start the origin
+     * @return a list of paths
+     */
+    private List<List<JobInvocation>> findAllPaths(JobInvocation start) {
+        List<List<JobInvocation>> allPaths = new LinkedList<List<JobInvocation>>();
+        if (jobsGraph.outDegreeOf(start) == 0) {
+            // base case
+            List<JobInvocation> singlePath = new LinkedList<JobInvocation>();
+            singlePath.add(start);
+            allPaths.add(singlePath);
+        } else {
+            for (JobEdge edge : jobsGraph.outgoingEdgesOf(start)) {
+                List<List<JobInvocation>> allPathsFromTarget = findAllPaths(edge.getTarget());
+                for (List<JobInvocation> path : allPathsFromTarget) {
+                    path.add(0, start);
+                }
+                allPaths.addAll(allPathsFromTarget);
+            }
+        }
+        return allPaths;
+    }
+
+    public JobInvocation getStartJob() {
+        return startJob;
     }
 
     public BuildFlow getBuildFlow() {
         return project;
     }
 
-    public Map<Job, Future<? extends AbstractBuild<?,?>>> startStep(Step s) {
-        Cause cause = new UpstreamCause(this);
-        Action flowAction = new BuildFlowAction(this);
-        List<Action> actions = new ArrayList<Action>();
-        actions.add(flowAction);
-        Map<Job, Future<? extends AbstractBuild<?,?>>> futures = new HashMap<Job, Future<? extends AbstractBuild<?,?>>>();
-        for (Job j : s.getJobs()) {
-        	String jobName = j.getName();
-            Item i = Jenkins.getInstance().getItem(jobName);
-            if (i instanceof AbstractProject) {
-                AbstractProject<?, ? extends AbstractBuild<?,?>> p = (AbstractProject<?, ? extends AbstractBuild<?,?>>) i;
-                if (j.getAnd() != null) {
-                	FlowDSL.evalJobAnd(j.getAnd(), flow);
-                }
-                for (Object param: j.getParams().keySet()) {
-                	String paramName = param.toString();
-                	Object paramValue = j.getParams().get(param);
-                	if (paramValue instanceof Closure) {
-                		paramValue = FlowDSL.evalParam((Closure<?>) paramValue, s.getParentFlow());
-                	}
-                	if (paramValue instanceof Boolean) {
-                		actions.add(new ParametersAction(new BooleanParameterValue(paramName, (Boolean) paramValue)));
-                	}
-                	else {
-                		//TODO For now we will only support String and boolean parameters
-                		actions.add(new ParametersAction(new StringParameterValue(paramName, paramValue.toString())));
-                	}
-                }                
-                futures.put(j, p.scheduleBuild2(p.getQuietPeriod(), cause, actions));
-            }
-            else {
-                throw new RuntimeException(jobName + " is not a job");
-            }
+    public void doGetDot(StaplerRequest req, StaplerResponse rsp) throws IOException {
+        new DOTExporter().export(rsp.getWriter(), jobsGraph);
+    }
+
+    public synchronized void addBuild(JobInvocation job) throws ExecutionException, InterruptedException {
+        job.setBuildIndex(buildIndex.getAndIncrement());
+        jobsGraph.addVertex(job);
+        for (JobInvocation up : state.get().getLastCompleted()) {
+            String edge = up.getId() + " => " + job.getId();
+            LOGGER.fine("added build to execution graph " + edge);
+            jobsGraph.addEdge(up, job, new JobEdge(up, job));
         }
-        return futures;
+        state.get().setLastCompleted(job);
+        setupDisplayGrid();
     }
 
     @Override
     public void run() {
-        run(createRunner());        
+        run(createRunner());
     }
     
     protected Runner createRunner() {
-        return new RunnerImpl();
+        return new RunnerImpl(dsl);
     }
     
     protected class RunnerImpl extends AbstractRunner {
-        protected Result doRun(BuildListener listener) throws Exception {
 
-            Result r = null;
+        private final String dsl;
+
+        public RunnerImpl(String dsl) {
+            this.dsl = dsl;
+        }
+
+        protected Result doRun(BuildListener listener) throws Exception {
+            if(!preBuild(listener, project.getPublishersList()))
+                return FAILURE;
+
             try {
-                Step currentStep = getFlow().getEntryStep();
-                while (currentStep != null) {
-                	Map<Job, Future<? extends AbstractBuild<?,?>>> futures = startStep(currentStep);
-                    Result stepResult = Result.SUCCESS;
-                    for (Job j : futures.keySet()) {
-                    	Future<? extends AbstractBuild<?,?>> f = futures.get(j);
-                    	AbstractBuild<?, ?> build = f.get();
-                    	if (j.getThen() != null) {
-                    		FlowDSL.evalJobThen(j.getThen(), getFlow(), build);
-                    	}
-                    	stepResult = stepResult.combine(build.getResult());
-                    }
-                    
-                    Step nextStep = currentStep.getTriggerOn(stepResult);
-                    if (nextStep == null) {
-                        r = stepResult;
-                    }
-                   	currentStep = nextStep;
-                }
-            } catch (InterruptedException e) {
-                r = Executor.currentExecutor().abortResult();
-                throw e;
+                setResult(SUCCESS);
+                new FlowDSL().executeFlowScript(FlowRun.this, dsl, listener);
             } finally {
-                if (r != null) setResult(r);
-                // tear down in reverse order
                 boolean failed=false;
                 for( int i=buildEnvironments.size()-1; i>=0; i-- ) {
                     if (!buildEnvironments.get(i).tearDown(FlowRun.this,listener)) {
                         failed=true;
-                    }                    
+                    }
                 }
-                // WARNING The return in the finally clause will trump any return before
-                if (failed) return FAILURE;
+                if (failed) return Result.FAILURE;
             }
-
-            return r;
+            return getState().getResult();
         }
 
         @Override
         public void post2(BuildListener listener) throws IOException, InterruptedException {
+            if(!performAllBuildSteps(listener, project.getPublishersList(), true))
+                setResult(FAILURE);
         }
 
         @Override
         public void cleanUp(BuildListener listener) throws Exception {
+            performAllBuildSteps(listener, project.getPublishersList(), false);
+            FlowRun.this.getStartJob().buildCompleted();
             super.cleanUp(listener);
+        }
+    }
+
+    public static class JobEdge {
+
+        private JobInvocation source;
+        private JobInvocation target;
+
+        public JobEdge(JobInvocation source, JobInvocation target) {
+            this.source = source;
+            this.target = target;
+        }
+
+        public JobInvocation getSource() {
+            return source;
+        }
+
+        public JobInvocation getTarget() {
+            return target;
         }
 
     }
-    
-    private static final Logger LOGGER = Logger.getLogger(FlowRun.class.getName());
+
 }

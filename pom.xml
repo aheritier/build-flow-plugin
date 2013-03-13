@@ -12,7 +12,7 @@
   ~ Lesser General Public License for more details.
   ~
   ~ You should have received a copy of the GNU Lesser General Public
-  ~ along with this program; if not, see <http://www.gnu.org/licenses/>.
+  ~ along with this program; if not, see <http://www.gnu.org/licenses />.
   -->
 
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
@@ -20,12 +20,12 @@
   <parent>
     <groupId>org.jenkins-ci.plugins</groupId>
     <artifactId>plugin</artifactId>
-    <version>1.424</version>
+    <version>1.466</version>
   </parent>
 
   <groupId>com.cloudbees.plugins</groupId>
   <artifactId>build-flow-plugin</artifactId>
-  <version>0.1-SNAPSHOT</version>
+  <version>0.9-SNAPSHOT</version>
   <packaging>hpi</packaging>
   <name>CloudBees Build Flow plugin</name>
   <description>Manages job orchestration as a build flow</description>
@@ -48,23 +48,24 @@
       <id>henryju</id>
       <name>Julien Henry</name>
     </developer>
+    <developer>
+      <id>mathieuancelin</id>
+      <name>Mathieu Ancelin</name>
+    </developer>
+    <developer>
+      <id>dbaeli</id>
+      <name>Dimitri Baeli</name>
+    </developer>
   </developers>
 
   <scm>
-    <connection>scm:git:ssh://git@github.com:ndeloof/build-flow-plugin.git</connection>
-    <developerConnection>scm:git:ssh://git@github.com:ndeloof/build-flow-plugin.git</developerConnection>
+    <connection>scm:git:git://git@github.com/jenkinsci/build-flow-plugin.git</connection>
+    <developerConnection>scm:git:git@github.com:jenkinsci/build-flow-plugin.git</developerConnection>
+    <url>https://github.com/jenkinsci/build-flow-plugin</url>
   </scm>
   
     <build>
         <plugins>
-            <plugin>
-                <groupId>org.jenkins-ci.tools</groupId>
-                <artifactId>maven-hpi-plugin</artifactId>
-                <version>1.79</version>
-                <configuration>
-                   <maskClasses>groovy. org.codehaus.groovy. groovyjarjarasm.</maskClasses>
-                </configuration>
-            </plugin>
             <plugin>
                 <groupId>org.codehaus.gmaven</groupId>
                 <artifactId>gmaven-plugin</artifactId>
@@ -91,6 +92,7 @@
             <groupId>org.codehaus.groovy</groupId>
             <artifactId>groovy-all</artifactId>
             <version>1.8.5</version>
+            <scope>provided</scope> <!-- from jenkins-core -->
         </dependency>
         <dependency>
         	<groupId>org.mockito</groupId>
@@ -98,12 +100,17 @@
         	<version>1.8.5</version>
         	<scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.jgrapht</groupId>
+            <artifactId>jgrapht-jdk1.5</artifactId>
+            <version>0.7.3</version>
+        </dependency>
     </dependencies>
   
   <repositories>
     <repository>
-      <id>m.g.o-public</id>
-      <url>http://maven.glassfish.org/content/groups/public/</url>
+      <id>repo.jenkins-ci.org</id>
+      <url>http://repo.jenkins-ci.org/public/</url>
       <releases>
         <enabled>true</enabled>
       </releases>
@@ -112,6 +119,12 @@
       </snapshots>
     </repository>
   </repositories>
+  <pluginRepositories>
+      <pluginRepository>
+          <id>repo.jenkins-ci.org</id>
+          <url>http://repo.jenkins-ci.org/public/</url>
+      </pluginRepository>
+  </pluginRepositories>
 
 </project>
 
